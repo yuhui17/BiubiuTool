@@ -1,8 +1,10 @@
-# 个人设置
+# 个人设置 / 自己截的侦测图片
 *.ini
+images/
 
 # exe 运行时自动释放的文件
 dist/Lib/
 
-# 打包的压缩档
+# 打包的压缩档 / 上传到 GitHub Release 的文件
 *.zip
+release/

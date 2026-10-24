@@ -1,8 +1,10 @@
 # Biubiu小工具
 
-基于 [AutoHotkey v2](https://www.autohotkey.com/) + [AutoHotInterception](https://github.com/evilC/AutoHotInterception) 的按键 / 鼠标连点工具。所有输入都通过 [Interception](https://github.com/oblitum/Interception) 驱动发送，模拟的是硬件输入。
+基于 [AutoHotkey v2](https://www.autohotkey.com/) + [AutoHotInterception](https://github.com/evilC/AutoHotInterception) 的游戏辅助小工具。所有输入都通过 [Interception](https://github.com/oblitum/Interception) 驱动发送，模拟的是硬件输入。
 
-## 功能
+包含两个工具：
+
+## Biubiu小工具（按键 / 鼠标连点）
 
 - 14 个按键行：每行一个按键（支持 `ctrl+a` 这类组合键），各自按自己的间隔循环触发
 - 4 个鼠标行：左键 / 右键 / 中键，可指定坐标（留空 = 在当前位置点击）
@@ -11,12 +13,22 @@
 - 开始 / 停止热键可自定义（默认 F7 / F8），鼠标坐标点「取点」后按 F9 记录
 - 设置保存在程序旁边的 `Biubiu小工具.ini`
 
+## Biubiu强化小工具（自动强化背包装备）
+
+- 背包 8×8 共 64 格：第 1～62 格是要强化的装备，第 63 格放水晶，第 64 格放红宝石
+- 只需取第 1 格和第 64 格的坐标，其余格子自动按等距算出；「检查」可在屏幕上标出所有坐标确认
+- 每一格的流程：右键装备 → 右键水晶 → 确认 → 右键红宝 → 确认 → OK → 确认，
+  然后在侦测位置等待「GEM」或「空」图片出现：GEM 会从图片中心往上拖走，空则直接换下一格
+- 依次强化 item 2 页、item 3 页（可勾选），可设置从第几格开始、每步间隔、拖拽距离
+- 「GEM」和「空」两张侦测图片需要自己在游戏里用「截图」按钮框选，保存在程序旁边的 `images/`
+- 设置保存在程序旁边的 `Biubiu强化小工具.ini`
+
 ## 直接使用
 
-1. 下载 `dist` 文件夹里的两个 exe
+1. 下载 `dist` 文件夹里的 exe
 2. 运行 `驱动安装.exe` → 点「安装驱动」→ 重启电脑
-   （也可以直接运行 `Biubiu小工具.exe`，检测不到驱动时会提示安装）
-3. 运行 `Biubiu小工具.exe`
+   （也可以直接运行工具，检测不到驱动时会提示安装）
+3. 运行 `Biubiu小工具.exe` 或 `Biubiu强化小工具.exe`
 
 要求：64 位 Windows 10 / 11，需要管理员权限（启动时会弹出 UAC 确认）。
 
@@ -26,7 +38,8 @@
 
 | 路径 | 说明 |
 |---|---|
-| `Biubiu小工具.ahk` | 主程序源码 |
+| `Biubiu小工具.ahk` | 按键 / 鼠标连点工具源码 |
+| `Biubiu强化小工具.ahk` | 自动强化工具源码 |
 | `驱动安装.ahk` | 驱动安装 / 卸载工具源码 |
 | `Lib/` | AutoHotInterception 库、`interception.dll`、驱动安装程序 `install-interception.exe` |
 | `icon.png` / `icon.ico` | 程序图标 |
@@ -40,6 +53,7 @@
 
 ```powershell
 Ahk2Exe.exe /in "Biubiu小工具.ahk" /out "dist\Biubiu小工具.exe" /base "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
+Ahk2Exe.exe /in "Biubiu强化小工具.ahk" /out "dist\Biubiu强化小工具.exe" /base "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
 Ahk2Exe.exe /in "驱动安装.ahk" /out "dist\驱动安装.exe" /base "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
 ```
 
