@@ -3,9 +3,10 @@ Biubiu强化小工具 (基于 AutoHotInterception)
 - 背包 8x8 共 64 格: 第 1~62 格是要强化的物品, 第 63 格放水晶, 第 64 格放红宝石
 - 每一格的流程: 右键物品 -> 右键水晶 -> 确认 -> 右键红宝 -> 确认 -> OK -> 确认,
   然后等 GEM 图片出现, 从图片中心往上拖拽一段距离, 再换下一格
-- 依次强化 item 2 页、item 3 页 (可勾选), 切换页面时点对应的页面坐标
+- 自动贩卖: 逐格检查, 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格; 本来就空的格子跳过
+- 强化 / 贩卖都依次处理 ITEM 1 页、ITEM 2 页 (可勾选) 的第 1~62 格; 强化和贩卖的页面按钮各有一组坐标
 - 背包只需取第 1 格和第 64 格的坐标, 其余格子自动按等距计算
-- F7 开始 / F8 停止 (可修改), 点 "取点" 后把鼠标移到目标位置按 F9 记录坐标
+- F7 开始强化 / F6 开始贩卖 / F8 停止 (可修改), 点 "取点" 后把鼠标移到目标位置按 F9 记录坐标
 */
 #Requires AutoHotkey v2.0
 #SingleInstance Force
@@ -50,10 +51,14 @@ DllCall("winmm\timeBeginPeriod", "UInt", 1) ; 让间隔精确到 1ms 左右
 AHI := AutoHotInterception()
 CfgFile := A_ScriptDir "\Biubiu强化小工具.ini"
 ; 强化完成后侦测位置会出现其中一种图: GEM (要往上拖走) 或 空 (直接下一格)
+; 空格子: 背包格子里没有东西的样子, 自动贩卖用来判断格子有没有东西 / 有没有卖掉
 Images := Map(
-	"gem", {file: A_ScriptDir "\images\gem.bmp", label: "GEM"},
-	"empty", {file: A_ScriptDir "\images\empty.bmp", label: "空"}
+	"gem", {file: A_ScriptDir "\images\gem.bmp", label: "GEM", use: "强化用"},
+	"empty", {file: A_ScriptDir "\images\empty.bmp", label: "空", use: "强化用"},
+	"slotEmpty", {file: A_ScriptDir "\images\slot_empty.bmp", label: "空格子", use: "贩卖用"}
 )
+DETECT_MARGIN := 60 ; GEM / 空 只在侦测位置 ± (图片一半 + 这么多像素) 内找
+SLOT_MARGIN := 8 ; 判断格子是否为空时, 只在格子中心 ± (图片一半 + 这么多像素) 内找, 避免找到隔壁格子
 HOLD_MS := 30 ; 每次点击按下到松开的时间
 DRAG_STEP := 50 ; 拖拽时每步移动的像素, 越大越快
 DRAG_DELAY := 2 ; 拖拽每步之间等待的毫秒, 越小越快
@@ -66,12 +71,19 @@ SLOT_RUBY := 64
 
 Running := false
 PickName := ""
-StartKey := ""
+StartKey := "" ; 开始强化
+SellKey := "" ; 开始贩卖
 StopKey := ""
 
-CoordNames := ["grid1", "grid64", "item2", "item3", "confirm", "ok", "detect"]
-CoordLabels := Map("grid1", "背包第 1 格", "grid64", "背包第 64 格", "item2", "item 2 页", "item3", "item 3 页"
-	, "confirm", "确认强化", "ok", "OK", "detect", "GEM 侦测位置")
+CoordNames := ["grid1", "grid64", "confirm", "ok", "detect", "enh1", "enh2"
+	, "sellGrid1", "sellGrid64", "sellConfirm", "sell1", "sell2"]
+CoordLabels := Map("grid1", "强化 第 1 格", "grid64", "强化 第 64 格", "confirm", "确认强化", "ok", "OK", "detect", "GEM 侦测位置"
+	, "enh1", "ITEM 1 (强化)", "enh2", "ITEM 2 (强化)", "sellGrid1", "贩卖 第 1 格", "sellGrid64", "贩卖 第 64 格"
+	, "sellConfirm", "确认贩卖", "sell1", "ITEM 1 (贩卖)", "sell2", "ITEM 2 (贩卖)")
+; 每种模式的背包格子 (第 1 格 / 第 64 格) 和页面按钮 (第 1 / 第 2 页) 坐标, 状态栏显示用的页名
+GridCoords := Map("enhance", ["grid1", "grid64"], "sell", ["sellGrid1", "sellGrid64"])
+PageCoords := Map("enhance", ["enh1", "enh2"], "sell", ["sell1", "sell2"])
+PageNames := ["ITEM 1", "ITEM 2"]
 
 ; 使用第一个鼠标设备发送点击
 MouseId := 0
@@ -101,21 +113,24 @@ g.SetFont("s10 Norm cDefault")
 g.Add("Text", "x15 y" TOP - 4 " w400 h1 0x10") ; 分隔线
 
 ; 按钮先创建, 让窗口打开时焦点落在按钮上, 而不是热键框 (热键框一获得焦点就会开始录键)
-btnSave := g.Add("Button", "x232 y" TOP + 11 " w80 h30", "保存设置")
+btnSave := g.Add("Button", "x252 y12 w76 h30", "保存设置")
 btnSave.OnEvent("Click", SaveConfig)
-g.Add("Button", "x322 y" TOP + 11 " w80 h30", "读取配置").OnEvent("Click", LoadConfig)
-g.Add("Text", "x20 y" TOP + 17, "开始")
+g.Add("Button", "x334 y12 w76 h30", "读取配置").OnEvent("Click", LoadConfig)
+; 热键: 开始强化 / 开始贩卖 / 停止
+g.Add("Text", "x20 y" TOP + 17, "强化")
 edStart := g.Add("Edit", "x56 y" TOP + 13 " w60 Center ReadOnly", "F7")
-g.Add("Text", "x126 y" TOP + 17, "停止")
-edStop := g.Add("Edit", "x162 y" TOP + 13 " w60 Center ReadOnly", "F8")
-edStart.OnEvent("Focus", CaptureKey.Bind(edStart, btnSave))
-edStop.OnEvent("Focus", CaptureKey.Bind(edStop, btnSave))
+g.Add("Text", "x146 y" TOP + 17, "贩卖")
+edSell := g.Add("Edit", "x182 y" TOP + 13 " w60 Center ReadOnly", "F6")
+g.Add("Text", "x272 y" TOP + 17, "停止")
+edStop := g.Add("Edit", "x308 y" TOP + 13 " w60 Center ReadOnly", "F8")
+for ed in [edStart, edSell, edStop]
+	ed.OnEvent("Focus", CaptureKey.Bind(ed, btnSave))
 
 ; 坐标
-g.Add("GroupBox", "x10 y" TOP + 52 " w400 h258", "坐标设置   (点「取点」后, 鼠标移到目标位置按 F9)")
+g.Add("GroupBox", "x10 y" TOP + 52 " w400 h392", "坐标设置   (点「取点」后, 鼠标移到目标位置按 F9)")
 Coords := Map()
 for i, name in CoordNames {
-	y := TOP + 78 + (i - 1) * 32
+	y := TOP + 78 + (i - 1) * 30
 	g.Add("Text", Format("x24 y{} w118", y + 4), CoordLabels[name])
 	Coords[name] := {
 		x: g.Add("Edit", Format("x146 y{} w58 Center", y)),
@@ -126,52 +141,54 @@ for i, name in CoordNames {
 g.Add("Button", Format("x340 y{} w62 h27", TOP + 78), "检查").OnEvent("Click", ShowCoords)
 g.Add("Text", Format("x340 y{} w64 cGray", TOP + 112), "在屏幕上`n标出所有`n坐标 4 秒")
 
-; 侦测图片: GEM 和 空 各一行
-g.Add("GroupBox", "x10 y" TOP + 318 " w400 h104", "侦测图片 (强化完成后, 侦测到任一张就换下一格)")
-for i, key in ["gem", "empty"] {
-	y := TOP + 342 + (i - 1) * 38
+; 侦测图片: 每张一行 (截图按钮 / 预览 / 状态 / 用途)
+g.Add("GroupBox", "x10 y" TOP + 452 " w400 h142", "侦测图片")
+for i, key in ["gem", "empty", "slotEmpty"] {
+	y := TOP + 476 + (i - 1) * 38
 	g.Add("Button", Format("x24 y{} w100 h30", y), "截图 " Images[key].label).OnEvent("Click", ShotImage.Bind(key))
 	Images[key].pic := g.Add("Picture", Format("x134 y{} w34 h34 Border", y - 2))
 	Images[key].txt := g.Add("Text", Format("x176 y{} w120", y + 6), "未截图")
+	g.Add("Text", Format("x320 y{} w80 cGray", y + 6), Images[key].use)
 }
-g.Add("Text", "x292 y" TOP + 348, "容差:")
-edTol := g.Add("Edit", "x332 y" TOP + 344 " w44 Center Number", 30)
 
-; 流程
-g.Add("GroupBox", "x10 y" TOP + 430 " w400 h124", "流程设置")
-g.Add("Text", "x24 y" TOP + 458, "每步间隔ms:")
-edStep := g.Add("Edit", "x110 y" TOP + 454 " w60 Center Number", 300)
-g.Add("Text", "x190 y" TOP + 458, "从第几格开始:")
-edStartSlot := g.Add("Edit", "x284 y" TOP + 454 " w44 Center Number", 1)
-g.Add("Text", "x334 y" TOP + 458 " cGray", "(1-62)")
-g.Add("Text", "x24 y" TOP + 492, "强化页面:")
-chkP2 := g.Add("CheckBox", "x100 y" TOP + 490 " Checked", "item 2")
-chkP3 := g.Add("CheckBox", "x176 y" TOP + 490 " Checked", "item 3")
-g.Add("Text", "x256 y" TOP + 492 " cGray", "每页强化 1~62 格")
-g.Add("Text", "x24 y" TOP + 524, "拖拽距离:")
-edDrag := g.Add("Edit", "x100 y" TOP + 520 " w60 Center Number", 100)
-g.Add("Text", "x168 y" TOP + 524 " cGray", "像素   (侦测到 GEM 时从图片中心往上拖)")
+; 流程 (强化 / 贩卖共用)
+g.Add("GroupBox", "x10 y" TOP + 602 " w400 h124", "流程设置   (强化 / 贩卖共用)")
+g.Add("Text", "x24 y" TOP + 630, "每步间隔ms:")
+edStep := g.Add("Edit", "x110 y" TOP + 626 " w60 Center Number", 300)
+g.Add("Text", "x190 y" TOP + 630, "从第几格开始:")
+edStartSlot := g.Add("Edit", "x284 y" TOP + 626 " w44 Center Number", 1)
+g.Add("Text", "x334 y" TOP + 630 " cGray", "(1-62)")
+g.Add("Text", "x24 y" TOP + 664, "页面:")
+chkP1 := g.Add("CheckBox", "x100 y" TOP + 662 " Checked", "ITEM 1")
+chkP2 := g.Add("CheckBox", "x180 y" TOP + 662 " Checked", "ITEM 2")
+g.Add("Text", "x260 y" TOP + 664 " cGray", "每页处理 1~62 格")
+g.Add("Text", "x24 y" TOP + 696, "拖拽距离:")
+edDrag := g.Add("Edit", "x100 y" TOP + 692 " w60 Center Number", 100)
+g.Add("Text", "x166 y" TOP + 696 " cGray", "像素 (GEM 往上拖)")
+g.Add("Text", "x290 y" TOP + 696, "找图容差:")
+edTol := g.Add("Edit", "x356 y" TOP + 692 " w44 Center Number", 30)
 
-txtStatus := g.Add("Text", "x15 y" TOP + 564 " w400 cGray")
+txtStatus := g.Add("Text", "x15 y" TOP + 736 " w400 cGray")
 
 LoadConfig()
 ApplyHotkeys()
 UpdatePreviews()
 SetStatus("")
-g.Show("w420 h" TOP + 590)
+g.Show("w420 h" TOP + 762)
 return
 
 ; ---------------- 运行 ----------------
-StartRun(*) {
+; mode: "enhance" 强化 / "sell" 贩卖
+StartRun(mode, *) {
 	global Running
 	if Running
 		return
-	if (err := Validate()) != "" {
+	if (err := Validate(mode)) != "" {
 		MsgBox(err, "Biubiu强化小工具", "Icon!")
 		return
 	}
 	Running := true
-	SetTimer(RunEnhance, -1)
+	SetTimer(mode = "sell" ? RunSell : RunEnhance, -1)
 }
 
 StopRun(*) {
@@ -179,52 +196,111 @@ StopRun(*) {
 	Running := false
 }
 
-ToggleRun(*) {
-	if Running
-		StopRun()
-	else
-		StartRun()
+; 开始键的热键回调; 开始键和停止键设成同一个键时 (toggles), 运行中再按一次就停止
+HotkeyStart(mode, toggles, *) {
+	if Running {
+		if toggles
+			StopRun()
+		return
+	}
+	StartRun(mode)
 }
 
-Validate() {
-	for name in ["grid1", "grid64", "confirm", "ok", "detect"]
+Validate(mode) {
+	pages := SelectedPages()
+	if !pages.Length
+		return "请至少勾选一个页面"
+	need := mode = "sell" ? ["sellGrid1", "sellGrid64", "sellConfirm"] : ["grid1", "grid64", "confirm", "ok", "detect"]
+	for pg in pages
+		need.Push(PageCoords[mode][pg])
+	for name in need
 		if !HasCoord(name)
 			return "请先设置坐标: " CoordLabels[name]
-	if (!chkP2.Value && !chkP3.Value)
-		return "请至少勾选一个强化页面"
-	if (chkP2.Value && !HasCoord("item2"))
-		return "请先设置坐标: " CoordLabels["item2"]
-	if (chkP3.Value && !HasCoord("item3"))
-		return "请先设置坐标: " CoordLabels["item3"]
-	for key, img in Images
-		if !FileExist(img.file)
-			return "请先截图「" img.label "」图片"
+	for key in (mode = "sell" ? ["slotEmpty"] : ["gem", "empty"])
+		if !FileExist(Images[key].file)
+			return "请先截图「" Images[key].label "」图片"
 	s := ToInt(edStartSlot.Value)
 	if (s < 1 || s > LAST_SLOT)
 		return "从第几格开始 要填 1 到 " LAST_SLOT
 	return ""
 }
 
+; 勾选的页面编号 (1 = ITEM 1, 2 = ITEM 2)
+SelectedPages() {
+	pages := []
+	if chkP1.Value
+		pages.Push(1)
+	if chkP2.Value
+		pages.Push(2)
+	return pages
+}
+
+; 点该模式第 pg 页的页面按钮坐标
+SwitchPage(mode, pg) {
+	SetStatus("切换到 " PageNames[pg] " 页…")
+	ClickPos(GetCoord(PageCoords[mode][pg]))
+}
+
+; 自动贩卖: 每页第 1~62 格, 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格
+RunSell() {
+	global Running
+	step := ToInt(edStep.Value)
+	confirm := GetCoord("sellConfirm")
+	sold := 0
+	where := ""
+	try {
+		for pi, pg in SelectedPages() {
+			SwitchPage("sell", pg)
+			SleepCheck(step)
+			slot := (pi = 1) ? ToInt(edStartSlot.Value) : 1 ; "从第几格开始" 只对第一页有效
+			while (Running && slot <= LAST_SLOT) {
+				where := PageNames[pg] " 页 第 " slot " 格"
+				p := SlotPos(slot, "sell")
+				if !SlotIsEmpty(p) {
+					SetStatus(where " / " LAST_SLOT ":  贩卖中…   (按 " StopKey " 停止)")
+					ClickPos(p, BTN_RIGHT)
+					SleepCheck(step)
+					ClickPos(confirm)
+					SleepCheck(step)
+					SetStatus(where " / " LAST_SLOT ":  等待格子变空…   (按 " StopKey " 停止)")
+					while (Running && !SlotIsEmpty(p))
+						SleepCheck(100)
+					if !Running
+						break
+					sold++
+				}
+				slot++
+			}
+			if !Running
+				break
+		}
+	} catch as e {
+		MsgBox("运行出错: " e.Message, "Biubiu强化小工具", "Icon!")
+		Running := false
+	}
+	if Running
+		SetStatus("贩卖完成! 共卖出 " sold " 格")
+	else
+		SetStatus("已停止在 " where "  (本次卖出 " sold " 格)")
+	Running := false
+}
+
+SlotIsEmpty(p) => FindImageAround(Images["slotEmpty"].file, p.x, p.y, SLOT_MARGIN, &cx, &cy)
+
 RunEnhance() {
 	global Running
 	step := ToInt(edStep.Value)
-	pages := []
-	if chkP2.Value
-		pages.Push("item2")
-	if chkP3.Value
-		pages.Push("item3")
 	crystal := SlotPos(SLOT_CRYSTAL), ruby := SlotPos(SLOT_RUBY)
 	confirm := GetCoord("confirm"), ok := GetCoord("ok")
 	done := 0
 	where := ""
 	try {
-		for pi, page in pages {
-			SetStatus("切换到 " CoordLabels[page] "…")
-			ClickPos(GetCoord(page))
+		for pi, pg in SelectedPages() {
+			SwitchPage("enhance", pg)
 			SleepCheck(step)
 			slot := (pi = 1) ? ToInt(edStartSlot.Value) : 1 ; "从第几格开始" 只对第一页有效
 			while (Running && slot <= LAST_SLOT) {
-				where := CoordLabels[page] " 第 " slot " 格"
+				where := PageNames[pg] " 页 第 " slot " 格"
 				SetStatus(where " / " LAST_SLOT ":  强化中…   (按 " StopKey " 停止)")
 				; 物品 / 水晶 / 红宝用右键, 确认 / OK 用左键
 				for act in [[SlotPos(slot), BTN_RIGHT], [crystal, BTN_RIGHT], [confirm, BTN_LEFT], [ruby, BTN_RIGHT]
@@ -237,10 +313,11 @@ RunEnhance() {
 				; 等到侦测到 GEM 或 空 其中一张图
 				SetStatus(where " / " LAST_SLOT ":  等待 GEM / 空 图片…   (按 " StopKey " 停止)")
 				found := ""
+				d := GetCoord("detect")
 				while (Running && found = "") {
-					if FindImageNear(Images["gem"].file, &gx, &gy)
+					if FindImageAround(Images["gem"].file, d.x, d.y, DETECT_MARGIN, &gx, &gy)
 						found := "gem"
-					else if FindImageNear(Images["empty"].file, &ex, &ey)
+					else if FindImageAround(Images["empty"].file, d.x, d.y, DETECT_MARGIN, &ex, &ey)
 						found := "empty"
 					else
 						SleepCheck(100)
@@ -310,16 +387,17 @@ DragUp(x, y, dist) {
 	AHI.SendMouseButtonEvent(MouseId, BTN_LEFT, 0)
 }
 
-; 只在 GEM 侦测位置附近找图, 范围 = 图片大小 + 40 像素; 找到时 cx, cy 返回图片中心
-FindImageNear(file, &cx, &cy) {
-	static sizes := Map() ; 文件 -> {stamp, size}, 重新截图后自动更新
-	stamp := FileGetTime(file) FileGetSize(file)
-	if (!sizes.Has(file) || sizes[file].stamp != stamp)
-		sizes[file] := {stamp: stamp, size: GetImageSize(file)}
-	size := sizes[file].size
-	d := GetCoord("detect")
-	m := 40 + Max(size.w, size.h)
-	if !ImageSearch(&fx, &fy, d.x - m, d.y - m, d.x + m, d.y + m, "*" ToInt(edTol.Value) " " file)
+; 在 (x, y) 附近找图: 范围 = 以 (x, y) 为中心, 图片大小再往外扩 margin 像素; 找到时 cx, cy 返回图片中心
+FindImageAround(file, x, y, margin, &cx, &cy) {
+	size := ImageSize(file)
+	mx := size.w // 2 + margin, my := size.h // 2 + margin
+	return FindImageIn(file, x - mx, y - my, x + mx, y + my, &cx, &cy)
+}
+
+; 在矩形 (x1, y1) - (x2, y2) 内找图; 找到时 cx, cy 返回图片中心
+FindImageIn(file, x1, y1, x2, y2, &cx, &cy) {
+	size := ImageSize(file)
+	if !ImageSearch(&fx, &fy, x1, y1, x2, y2, "*" ToInt(edTol.Value) " " file)
 		return false
 	cx := fx + size.w // 2
 	cy := fy + size.h // 2
@@ -341,9 +419,9 @@ GetCoord(name) {
 	return {x: ToInt(Coords[name].x.Value), y: ToInt(Coords[name].y.Value)}
 }
 
-; 由第 1 格 (左上) 和第 64 格 (右下) 按等距算出第 i 格的中心
-SlotPos(i) {
-	a := GetCoord("grid1"), b := GetCoord("grid64")
+; 由该模式的第 1 格 (左上) 和第 64 格 (右下) 按等距算出第 i 格的中心
+SlotPos(i, mode := "enhance") {
+	a := GetCoord(GridCoords[mode][1]), b := GetCoord(GridCoords[mode][2])
 	col := Mod(i - 1, 8), row := (i - 1) // 8
 	return {x: Round(a.x + (b.x - a.x) * col / 7), y: Round(a.y + (b.y - a.y) * row / 7)}
 }
@@ -366,7 +444,7 @@ DoPick(*) {
 	PickName := ""
 }
 
-; 在屏幕上把所有坐标标出来 4 秒: 红 = 背包格子, 蓝 = 水晶, 紫 = 红宝, 绿 = 其他坐标
+; 在屏幕上把所有坐标标出来 4 秒: 红 = 强化格子, 蓝 = 水晶, 紫 = 红宝, 橙 = 贩卖格子, 绿 = 其他坐标
 ShowCoords(*) {
 	static ov := 0
 	if ov
@@ -388,7 +466,14 @@ ShowCoords(*) {
 		}
 		marks += 64
 	}
-	for name in ["item2", "item3", "confirm", "ok", "detect"] {
+	if (HasCoord("sellGrid1") && HasCoord("sellGrid64")) {
+		Loop 64 {
+			p := SlotPos(A_Index, "sell")
+			Mark(ov, p.x - vx, p.y - vy, "FFA000", A_Index)
+		}
+		marks += 64
+	}
+	for name in ["confirm", "ok", "detect", "enh1", "enh2", "sellConfirm", "sell1", "sell2"] {
 		if HasCoord(name) {
 			p := GetCoord(name)
 			Mark(ov, p.x - vx, p.y - vy, "30D030", CoordLabels[name])
@@ -429,8 +514,8 @@ ShotImage(key, *) {
 	g.Show()
 	if !r
 		return
-	; 侦测位置还没设置时, 默认用截图区域的中心
-	if !HasCoord("detect") {
+	; GEM / 空 截图时, 侦测位置还没设置就默认用截图区域的中心
+	if ((key = "gem" || key = "empty") && !HasCoord("detect")) {
 		Coords["detect"].x.Value := r.x + r.w // 2
 		Coords["detect"].y.Value := r.y + r.h // 2
 	}
@@ -448,6 +533,15 @@ UpdatePreviews() {
 			img.txt.Value := "未截图"
 		}
 	}
+}
+
+; 带缓存的图片大小, 重新截图 (文件时间 / 大小变了) 后自动更新
+ImageSize(file) {
+	static sizes := Map()
+	stamp := FileGetTime(file) FileGetSize(file)
+	if (!sizes.Has(file) || sizes[file].stamp != stamp)
+		sizes[file] := {stamp: stamp, size: GetImageSize(file)}
+	return sizes[file].size
 }
 
 GetImageSize(path) {
@@ -597,31 +691,34 @@ ToHotkey(str) {
 }
 
 ApplyHotkeys() {
-	global StartKey, StopKey
-	s := Trim(edStart.Value), t := Trim(edStop.Value)
-	if (s = StartKey && t = StopKey)
+	global StartKey, SellKey, StopKey
+	s := Trim(edStart.Value), b := Trim(edSell.Value), t := Trim(edStop.Value)
+	if (s = StartKey && b = SellKey && t = StopKey)
 		return
-	for k in [StartKey, StopKey]
+	if (s = b) {
+		MsgBox("强化和贩卖的开始键不能设成同一个键", "Biubiu强化小工具", "Icon!")
+		edStart.Value := StartKey, edSell.Value := SellKey, edStop.Value := StopKey
+		return
+	}
+	for k in [StartKey, SellKey, StopKey]
 		if (k != "")
 			try Hotkey(ToHotkey(k), "Off")
 	try {
-		if (s = t) {
-			Hotkey(ToHotkey(s), ToggleRun, "On")
-		} else {
-			Hotkey(ToHotkey(s), StartRun, "On")
+		Hotkey(ToHotkey(s), HotkeyStart.Bind("enhance", s = t), "On")
+		Hotkey(ToHotkey(b), HotkeyStart.Bind("sell", b = t), "On")
+		if (t != s && t != b)
 			Hotkey(ToHotkey(t), StopRun, "On")
-		}
 	} catch as e {
 		MsgBox("热键设置无效: " e.Message, "Biubiu强化小工具", "Icon!")
 	}
-	StartKey := s, StopKey := t
+	StartKey := s, SellKey := b, StopKey := t
 	if !Running
 		SetStatus("")
 }
 
 SetStatus(text) {
 	if (text = "")
-		text := "设置好坐标和 GEM / 空 图片后, 按 " StartKey " 开始 / " StopKey " 停止"
+		text := "按 " StartKey " 开始强化 / " SellKey " 开始贩卖 / " StopKey " 停止"
 	txtStatus.Value := text
 }
 
@@ -629,13 +726,14 @@ SetStatus(text) {
 SaveConfig(*) {
 	ApplyHotkeys()
 	IniWrite(edStart.Value, CfgFile, "Main", "Start")
+	IniWrite(edSell.Value, CfgFile, "Main", "Sell")
 	IniWrite(edStop.Value, CfgFile, "Main", "Stop")
 	IniWrite(ToInt(edStep.Value), CfgFile, "Main", "Step")
 	IniWrite(ToInt(edStartSlot.Value), CfgFile, "Main", "StartSlot")
 	IniWrite(ToInt(edTol.Value), CfgFile, "Main", "Tolerance")
 	IniWrite(ToInt(edDrag.Value), CfgFile, "Main", "DragDist")
-	IniWrite(chkP2.Value, CfgFile, "Main", "Item2")
-	IniWrite(chkP3.Value, CfgFile, "Main", "Item3")
+	IniWrite(chkP1.Value, CfgFile, "Main", "Page1")
+	IniWrite(chkP2.Value, CfgFile, "Main", "Page2")
 	for name in CoordNames
 		IniWrite(Trim(Coords[name].x.Value) "," Trim(Coords[name].y.Value), CfgFile, "Coords", name)
 	SetStatus("设置已保存")
@@ -648,13 +746,14 @@ LoadConfig(ctrl := 0, *) {
 		return
 	}
 	edStart.Value := IniRead(CfgFile, "Main", "Start", "F7")
+	edSell.Value := IniRead(CfgFile, "Main", "Sell", "F6")
 	edStop.Value := IniRead(CfgFile, "Main", "Stop", "F8")
 	edStep.Value := IniRead(CfgFile, "Main", "Step", 300)
 	edStartSlot.Value := IniRead(CfgFile, "Main", "StartSlot", 1)
 	edTol.Value := IniRead(CfgFile, "Main", "Tolerance", 30)
 	edDrag.Value := IniRead(CfgFile, "Main", "DragDist", 100)
-	chkP2.Value := ToInt(IniRead(CfgFile, "Main", "Item2", 1))
-	chkP3.Value := ToInt(IniRead(CfgFile, "Main", "Item3", 1))
+	chkP1.Value := ToInt(IniRead(CfgFile, "Main", "Page1", 1))
+	chkP2.Value := ToInt(IniRead(CfgFile, "Main", "Page2", 1))
 	for name in CoordNames {
 		f := StrSplit(IniRead(CfgFile, "Coords", name, ","), ",")
 		if (f.Length = 2)
