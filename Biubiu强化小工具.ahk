@@ -1,10 +1,12 @@
 /*
 Biubiu强化小工具 (基于 AutoHotInterception)
-- 背包 8x8 共 64 格: 第 1~62 格是要强化的物品, 第 63 格放水晶, 第 64 格放红宝石
+- 背包 8x8 共 64 格: 水晶 / 红宝石放在哪一格可以设置 (默认第 63 / 64 格), 其余格子是要强化的物品
+- 强化前先看格子是不是空格子, 是就跳过 (那一格没有道具)
 - 每一格的流程: 右键物品 -> 右键水晶 -> 确认 -> 右键红宝 -> 确认 -> OK -> 确认,
   然后等 GEM 图片出现, 从图片中心往上拖拽一段距离, 再换下一格
 - 自动贩卖: 逐格检查, 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格; 本来就空的格子跳过
-- 强化 / 贩卖都依次处理 ITEM 1 页、ITEM 2 页 (可勾选) 的第 1~62 格; 强化和贩卖的页面按钮各有一组坐标
+- 强化 / 贩卖都依次处理 ITEM 1 页、ITEM 2 页 (可勾选) 的第 1~64 格, 跳过水晶 / 红宝石那两格;
+  强化和贩卖的页面按钮各有一组坐标
 - 背包只需取第 1 格和第 64 格的坐标, 其余格子自动按等距计算
 - F7 开始强化 / F6 开始贩卖 / F8 停止 (可修改), 点 "取点" 后把鼠标移到目标位置按 F9 记录坐标
 */
@@ -51,11 +53,11 @@ DllCall("winmm\timeBeginPeriod", "UInt", 1) ; 让间隔精确到 1ms 左右
 AHI := AutoHotInterception()
 CfgFile := A_ScriptDir "\Biubiu强化小工具.ini"
 ; 强化完成后侦测位置会出现其中一种图: GEM (要往上拖走) 或 空 (直接下一格)
-; 空格子: 背包格子里没有东西的样子, 自动贩卖用来判断格子有没有东西 / 有没有卖掉
+; 空格子: 背包格子里没有东西的样子; 强化用来跳过没道具的格子, 贩卖用来判断格子有没有东西 / 有没有卖掉
 Images := Map(
 	"gem", {file: A_ScriptDir "\images\gem.bmp", label: "GEM", use: "强化用"},
 	"empty", {file: A_ScriptDir "\images\empty.bmp", label: "空", use: "强化用"},
-	"slotEmpty", {file: A_ScriptDir "\images\slot_empty.bmp", label: "空格子", use: "贩卖用"}
+	"slotEmpty", {file: A_ScriptDir "\images\slot_empty.bmp", label: "空格子", use: "强化 / 贩卖"}
 )
 DETECT_MARGIN := 60 ; GEM / 空 只在侦测位置 ± (图片一半 + 这么多像素) 内找
 SLOT_MARGIN := 8 ; 判断格子是否为空时, 只在格子中心 ± (图片一半 + 这么多像素) 内找, 避免找到隔壁格子
@@ -65,9 +67,7 @@ DRAG_DELAY := 2 ; 拖拽每步之间等待的毫秒, 越小越快
 DRAG_HOLD := 15 ; 拖拽按下后 / 松开前等待的毫秒
 BTN_LEFT := 0 ; AHI 鼠标按键代码
 BTN_RIGHT := 1
-LAST_SLOT := 62 ; 第 63 / 64 格放水晶和红宝石, 只强化 1~62
-SLOT_CRYSTAL := 63
-SLOT_RUBY := 64
+TOTAL_SLOTS := 64 ; 背包 8x8, 水晶 / 红宝石所在的格子会被跳过
 
 Running := false
 PickName := ""
@@ -152,29 +152,36 @@ for i, key in ["gem", "empty", "slotEmpty"] {
 }
 
 ; 流程 (强化 / 贩卖共用)
-g.Add("GroupBox", "x10 y" TOP + 602 " w400 h124", "流程设置   (强化 / 贩卖共用)")
+g.Add("GroupBox", "x10 y" TOP + 602 " w400 h156", "流程设置   (强化 / 贩卖共用)")
 g.Add("Text", "x24 y" TOP + 630, "每步间隔ms:")
 edStep := g.Add("Edit", "x110 y" TOP + 626 " w60 Center Number", 300)
 g.Add("Text", "x190 y" TOP + 630, "从第几格开始:")
 edStartSlot := g.Add("Edit", "x284 y" TOP + 626 " w44 Center Number", 1)
-g.Add("Text", "x334 y" TOP + 630 " cGray", "(1-62)")
-g.Add("Text", "x24 y" TOP + 664, "页面:")
-chkP1 := g.Add("CheckBox", "x100 y" TOP + 662 " Checked", "ITEM 1")
-chkP2 := g.Add("CheckBox", "x180 y" TOP + 662 " Checked", "ITEM 2")
-g.Add("Text", "x260 y" TOP + 664 " cGray", "每页处理 1~62 格")
-g.Add("Text", "x24 y" TOP + 696, "拖拽距离:")
-edDrag := g.Add("Edit", "x100 y" TOP + 692 " w60 Center Number", 100)
-g.Add("Text", "x166 y" TOP + 696 " cGray", "像素 (GEM 往上拖)")
-g.Add("Text", "x290 y" TOP + 696, "找图容差:")
-edTol := g.Add("Edit", "x356 y" TOP + 692 " w44 Center Number", 30)
+g.Add("Text", "x334 y" TOP + 630 " cGray", "(1-64)")
+g.Add("Text", "x24 y" TOP + 664, "水晶在第")
+edCrystal := g.Add("Edit", "x82 y" TOP + 660 " w44 Center Number", 63)
+g.Add("Text", "x130 y" TOP + 664, "格")
+g.Add("Text", "x160 y" TOP + 664, "红宝在第")
+edRuby := g.Add("Edit", "x218 y" TOP + 660 " w44 Center Number", 64)
+g.Add("Text", "x266 y" TOP + 664, "格")
+g.Add("Text", "x292 y" TOP + 664 " cGray", "(这两格不处理)")
+g.Add("Text", "x24 y" TOP + 696, "页面:")
+chkP1 := g.Add("CheckBox", "x100 y" TOP + 694 " Checked", "ITEM 1")
+chkP2 := g.Add("CheckBox", "x180 y" TOP + 694 " Checked", "ITEM 2")
+g.Add("Text", "x260 y" TOP + 696 " cGray", "空格子会自动跳过")
+g.Add("Text", "x24 y" TOP + 728, "拖拽距离:")
+edDrag := g.Add("Edit", "x100 y" TOP + 724 " w60 Center Number", 100)
+g.Add("Text", "x166 y" TOP + 728 " cGray", "像素 (GEM 往上拖)")
+g.Add("Text", "x290 y" TOP + 728, "找图容差:")
+edTol := g.Add("Edit", "x356 y" TOP + 724 " w44 Center Number", 30)
 
-txtStatus := g.Add("Text", "x15 y" TOP + 736 " w400 cGray")
+txtStatus := g.Add("Text", "x15 y" TOP + 768 " w400 cGray")
 
 LoadConfig()
 ApplyHotkeys()
 UpdatePreviews()
 SetStatus("")
-g.Show("w420 h" TOP + 762)
+g.Show("w420 h" TOP + 794)
 return
 
 ; ---------------- 运行 ----------------
@@ -216,14 +223,22 @@ Validate(mode) {
 	for name in need
 		if !HasCoord(name)
 			return "请先设置坐标: " CoordLabels[name]
-	for key in (mode = "sell" ? ["slotEmpty"] : ["gem", "empty"])
+	for key in (mode = "sell" ? ["slotEmpty"] : ["gem", "empty", "slotEmpty"])
 		if !FileExist(Images[key].file)
 			return "请先截图「" Images[key].label "」图片"
 	s := ToInt(edStartSlot.Value)
-	if (s < 1 || s > LAST_SLOT)
-		return "从第几格开始 要填 1 到 " LAST_SLOT
+	if (s < 1 || s > TOTAL_SLOTS)
+		return "从第几格开始 要填 1 到 " TOTAL_SLOTS
+	c := ToInt(edCrystal.Value), r := ToInt(edRuby.Value)
+	if (c < 1 || c > TOTAL_SLOTS || r < 1 || r > TOTAL_SLOTS)
+		return "水晶 / 红宝所在的格子要填 1 到 " TOTAL_SLOTS
+	if (c = r)
+		return "水晶和红宝不能在同一格"
 	return ""
 }
+
+; 水晶 / 红宝石所在的格子不强化也不贩卖
+IsMaterialSlot(slot) => slot = ToInt(edCrystal.Value) || slot = ToInt(edRuby.Value)
 
 ; 勾选的页面编号 (1 = ITEM 1, 2 = ITEM 2)
 SelectedPages() {
@@ -241,7 +256,7 @@ SwitchPage(mode, pg) {
 	ClickPos(GetCoord(PageCoords[mode][pg]))
 }
 
-; 自动贩卖: 每页第 1~62 格, 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格
+; 自动贩卖: 每页第 1~64 格 (跳过水晶 / 红宝格), 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格
 RunSell() {
 	global Running
 	step := ToInt(edStep.Value)
@@ -253,16 +268,16 @@ RunSell() {
 			SwitchPage("sell", pg)
 			SleepCheck(step)
 			slot := (pi = 1) ? ToInt(edStartSlot.Value) : 1 ; "从第几格开始" 只对第一页有效
-			while (Running && slot <= LAST_SLOT) {
+			while (Running && slot <= TOTAL_SLOTS) {
 				where := PageNames[pg] " 页 第 " slot " 格"
 				p := SlotPos(slot, "sell")
-				if !SlotIsEmpty(p) {
-					SetStatus(where " / " LAST_SLOT ":  贩卖中…   (按 " StopKey " 停止)")
+				if (!IsMaterialSlot(slot) && !SlotIsEmpty(p)) {
+					SetStatus(where " / " TOTAL_SLOTS ":  贩卖中…   (按 " StopKey " 停止)")
 					ClickPos(p, BTN_RIGHT)
 					SleepCheck(step)
 					ClickPos(confirm)
 					SleepCheck(step)
-					SetStatus(where " / " LAST_SLOT ":  等待格子变空…   (按 " StopKey " 停止)")
+					SetStatus(where " / " TOTAL_SLOTS ":  等待格子变空…   (按 " StopKey " 停止)")
 					while (Running && !SlotIsEmpty(p))
 						SleepCheck(100)
 					if !Running
@@ -290,7 +305,7 @@ SlotIsEmpty(p) => FindImageAround(Images["slotEmpty"].file, p.x, p.y, SLOT_MARGI
 RunEnhance() {
 	global Running
 	step := ToInt(edStep.Value)
-	crystal := SlotPos(SLOT_CRYSTAL), ruby := SlotPos(SLOT_RUBY)
+	crystal := SlotPos(ToInt(edCrystal.Value)), ruby := SlotPos(ToInt(edRuby.Value))
 	confirm := GetCoord("confirm"), ok := GetCoord("ok")
 	done := 0
 	where := ""
@@ -299,11 +314,17 @@ RunEnhance() {
 			SwitchPage("enhance", pg)
 			SleepCheck(step)
 			slot := (pi = 1) ? ToInt(edStartSlot.Value) : 1 ; "从第几格开始" 只对第一页有效
-			while (Running && slot <= LAST_SLOT) {
+			while (Running && slot <= TOTAL_SLOTS) {
 				where := PageNames[pg] " 页 第 " slot " 格"
-				SetStatus(where " / " LAST_SLOT ":  强化中…   (按 " StopKey " 停止)")
+				p := SlotPos(slot)
+				; 水晶 / 红宝那两格, 以及空格子 (没有道具) 直接跳过
+				if (IsMaterialSlot(slot) || SlotIsEmpty(p)) {
+					slot++
+					continue
+				}
+				SetStatus(where " / " TOTAL_SLOTS ":  强化中…   (按 " StopKey " 停止)")
 				; 物品 / 水晶 / 红宝用右键, 确认 / OK 用左键
-				for act in [[SlotPos(slot), BTN_RIGHT], [crystal, BTN_RIGHT], [confirm, BTN_LEFT], [ruby, BTN_RIGHT]
+				for act in [[p, BTN_RIGHT], [crystal, BTN_RIGHT], [confirm, BTN_LEFT], [ruby, BTN_RIGHT]
 					, [confirm, BTN_LEFT], [ok, BTN_LEFT], [confirm, BTN_LEFT]] {
 					if !Running
 						break
@@ -311,7 +332,7 @@ RunEnhance() {
 					SleepCheck(step)
 				}
 				; 等到侦测到 GEM 或 空 其中一张图
-				SetStatus(where " / " LAST_SLOT ":  等待 GEM / 空 图片…   (按 " StopKey " 停止)")
+				SetStatus(where " / " TOTAL_SLOTS ":  等待 GEM / 空 图片…   (按 " StopKey " 停止)")
 				found := ""
 				d := GetCoord("detect")
 				while (Running && found = "") {
@@ -457,9 +478,9 @@ ShowCoords(*) {
 	if (HasCoord("grid1") && HasCoord("grid64")) {
 		Loop 64 {
 			p := SlotPos(A_Index)
-			if (A_Index = SLOT_CRYSTAL)
+			if (A_Index = ToInt(edCrystal.Value))
 				Mark(ov, p.x - vx, p.y - vy, "00A0FF", "水晶")
-			else if (A_Index = SLOT_RUBY)
+			else if (A_Index = ToInt(edRuby.Value))
 				Mark(ov, p.x - vx, p.y - vy, "FF40FF", "红宝")
 			else
 				Mark(ov, p.x - vx, p.y - vy, "FF3030", A_Index)
@@ -732,6 +753,8 @@ SaveConfig(*) {
 	IniWrite(ToInt(edStartSlot.Value), CfgFile, "Main", "StartSlot")
 	IniWrite(ToInt(edTol.Value), CfgFile, "Main", "Tolerance")
 	IniWrite(ToInt(edDrag.Value), CfgFile, "Main", "DragDist")
+	IniWrite(ToInt(edCrystal.Value), CfgFile, "Main", "CrystalSlot")
+	IniWrite(ToInt(edRuby.Value), CfgFile, "Main", "RubySlot")
 	IniWrite(chkP1.Value, CfgFile, "Main", "Page1")
 	IniWrite(chkP2.Value, CfgFile, "Main", "Page2")
 	for name in CoordNames
@@ -752,6 +775,8 @@ LoadConfig(ctrl := 0, *) {
 	edStartSlot.Value := IniRead(CfgFile, "Main", "StartSlot", 1)
 	edTol.Value := IniRead(CfgFile, "Main", "Tolerance", 30)
 	edDrag.Value := IniRead(CfgFile, "Main", "DragDist", 100)
+	edCrystal.Value := IniRead(CfgFile, "Main", "CrystalSlot", 63)
+	edRuby.Value := IniRead(CfgFile, "Main", "RubySlot", 64)
 	chkP1.Value := ToInt(IniRead(CfgFile, "Main", "Page1", 1))
 	chkP2.Value := ToInt(IniRead(CfgFile, "Main", "Page2", 1))
 	for name in CoordNames {
