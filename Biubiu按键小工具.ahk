@@ -53,9 +53,9 @@ BtnNames := ["左键", "右键", "中键"] ; AHI 鼠标按键代码 0 / 1 / 2
 DefaultKeys := ["1", "2", "3", "4", "5", "6", "7", "F1", "F2", "F3", "F4", "F5", "F6", "F7"]
 
 ; 自动贩卖
-SellCoordNames := ["sellGrid1", "sellGrid64", "sell1", "sell2"]
+SellCoordNames := ["sellGrid1", "sellGrid64", "sell1", "sell2", "park"]
 SellLabels := Map("sellGrid1", "贩卖 第 1 格", "sellGrid64", "贩卖 第 64 格"
-	, "sell1", "ITEM 1 页面", "sell2", "ITEM 2 页面")
+	, "sell1", "ITEM 1 页面", "sell2", "ITEM 2 页面", "park", "鼠标停放位置")
 PageNames := ["ITEM 1", "ITEM 2"]
 SlotEmptyFile := A_ScriptDir "\images\slot_empty.bmp" ; 和 Biubiu强化小工具 共用同一张
 TOTAL_SLOTS := 64
@@ -168,7 +168,7 @@ Loop MOUSE_ROWS {
 ; ===== 分页 2: 自动贩卖 =====
 tabs.UseTab(2)
 ; 坐标
-g.Add("GroupBox", "x20 y" BODY + 52 " w300 h184", "贩卖坐标   (点「取点」后按 F9)")
+g.Add("GroupBox", "x20 y" BODY + 52 " w300 h214", "贩卖坐标   (点「取点」后按 F9)")
 SellCoords := Map()
 for i, name in SellCoordNames {
 	y := BODY + 78 + (i - 1) * 30
@@ -180,8 +180,8 @@ for i, name in SellCoordNames {
 	btnPick := g.Add("Button", Format("x252 y{} w56 h26", y), "取点")
 	btnPick.OnEvent("Click", StartPick.Bind({x: SellCoords[name].x, y: SellCoords[name].y, label: SellLabels[name]}))
 }
-g.Add("Button", "x30 y" BODY + 198 " w70 h26", "检查").OnEvent("Click", ShowSellCoords)
-g.Add("Text", "x108 y" BODY + 202 " cGray", "在屏幕上标出格子和坐标 4 秒")
+g.Add("Button", "x30 y" BODY + 228 " w70 h26", "检查").OnEvent("Click", ShowSellCoords)
+g.Add("Text", "x108 y" BODY + 232 " cGray", "在屏幕上标出格子和坐标 4 秒")
 
 ; 空格子截图
 g.Add("GroupBox", "x330 y" BODY + 52 " w270 h70", "空格子截图   (格子没东西的样子)")
@@ -359,7 +359,7 @@ StartSell(*) {
 ValidateSell() {
 	if (!chkSellP1.Value && !chkSellP2.Value)
 		return "请至少勾选一个贩卖页面"
-	need := ["sellGrid1", "sellGrid64"]
+	need := ["sellGrid1", "sellGrid64", "park"]
 	if chkSellP1.Value
 		need.Push("sell1")
 	if chkSellP2.Value
@@ -396,12 +396,14 @@ RunSell() {
 			while (Selling && slot <= TOTAL_SLOTS) {
 				where := PageNames[pg] " 页 第 " slot " 格"
 				p := SlotPos(slot)
+				ParkMouse() ; 侦测前先把光标移开, 免得挡住格子
 				if (!IsSkipSlot(slot) && !SlotIsEmpty(p)) {
 					SetStatus(where " / " TOTAL_SLOTS ":  贩卖中…   (按 " StopKey " 停止)")
 					ClickPos(p, BTN_RIGHT)
 					SleepSell(step)
 					PressEnter()
 					SleepSell(step)
+					ParkMouse() ; 右键后光标还停在格子上, 移开再等格子变空
 					SetStatus(where " / " TOTAL_SLOTS ":  等待格子变空…   (按 " StopKey " 停止)")
 					while (Selling && !SlotIsEmpty(p))
 						SleepSell(100)
@@ -423,6 +425,13 @@ RunSell() {
 	else
 		SetStatus("已停止在 " where "  (本次卖出 " sold " 格)")
 	Selling := false
+}
+
+; 把光标移到「鼠标停放位置」, 侦测图片时不让游戏里的光标 / 提示框挡住格子
+ParkMouse() {
+	p := GetSellCoord("park")
+	MoveTo(p.x, p.y)
+	Sleep 20
 }
 
 ; 确认 = 按 Enter, 次数同 "每次点击" 的设定
@@ -491,7 +500,7 @@ ShowSellCoords(*) {
 		}
 		marks += TOTAL_SLOTS
 	}
-	for name in ["sell1", "sell2"] {
+	for name in ["sell1", "sell2", "park"] {
 		if HasSellCoord(name) {
 			p := GetSellCoord(name)
 			Mark(ov, p.x - vx, p.y - vy, "30D030", SellLabels[name])
