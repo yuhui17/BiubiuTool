@@ -2,9 +2,10 @@
 Biubiu强化小工具 (基于 AutoHotInterception)
 - 背包 8x8 共 64 格: 水晶 / 红宝石放在哪一格可以设置 (默认第 63 / 64 格), 其余格子是要强化的物品
 - 强化前先看格子是不是空格子, 是就跳过 (那一格没有道具)
-- 每一格的流程: 右键物品 -> 右键水晶 -> 确认 -> 右键红宝 -> 确认 -> OK -> 确认,
+- 每一格的流程: 右键物品 -> 右键水晶 -> Enter -> 右键红宝 -> Enter -> OK -> Enter,
   然后等 GEM 图片出现, 从图片中心往上拖拽一段距离, 再换下一格
-- 自动贩卖: 逐格检查, 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格; 本来就空的格子跳过
+- 自动贩卖: 逐格检查, 不是空格子就 右键 -> Enter 确认, 等格子变成空格子再换下一格; 本来就空的格子跳过
+- 确认都用 Enter 键 (不用坐标), "每次点击 N 下" 也会让 Enter 按 N 次
 - 强化 / 贩卖都依次处理 ITEM 1 页、ITEM 2 页 (可勾选) 的第 1~64 格, 跳过水晶 / 红宝石那两格;
   强化和贩卖的页面按钮各有一组坐标
 - 背包只需取第 1 格和第 64 格的坐标, 其余格子自动按等距计算
@@ -35,15 +36,11 @@ if !A_IsAdmin {
 #include Lib\AutoHotInterception.ahk
 
 SetWorkingDir A_ScriptDir
-IconFile := A_ScriptDir "\icon.png"
-if A_IsCompiled {
-	; exe 运行时把图标释放到 Lib 文件夹 (AHI 也会把它需要的 dll 释放到这里)
-	DirCreate("Lib")
-	FileInstall("icon.png", "Lib\icon.png", 1)
-	IconFile := A_ScriptDir "\Lib\icon.png"
-}
-if FileExist(IconFile)
-	TraySetIcon(IconFile) ; 托盘图标, 之后创建的窗口也会用它
+; 图标: exe 直接用自己内嵌的图标 (Icon1), 不释放成文件; 直接运行 .ahk 时用 icon.png
+IconFile := A_IsCompiled ? A_ScriptFullPath : A_ScriptDir "\icon.png"
+IconOpt := A_IsCompiled ? "Icon1" : ""
+if (!A_IsCompiled && FileExist(IconFile))
+	TraySetIcon(IconFile) ; 托盘图标, 之后创建的窗口也会用它 (exe 本身已经带这个图标)
 CoordMode "Mouse", "Screen"
 CoordMode "Pixel", "Screen"
 InstallKeybdHook
@@ -62,6 +59,7 @@ Images := Map(
 DETECT_MARGIN := 60 ; GEM / 空 只在侦测位置 ± (图片一半 + 这么多像素) 内找
 SLOT_MARGIN := 8 ; 判断格子是否为空时, 只在格子中心 ± (图片一半 + 这么多像素) 内找, 避免找到隔壁格子
 HOLD_MS := 30 ; 每次点击按下到松开的时间
+CLICK_GAP := 80 ; "每次点击 N 下" 时, 每下之间间隔的毫秒
 DRAG_STEP := 50 ; 拖拽时每步移动的像素, 越大越快
 DRAG_DELAY := 2 ; 拖拽每步之间等待的毫秒, 越小越快
 DRAG_HOLD := 15 ; 拖拽按下后 / 松开前等待的毫秒
@@ -75,25 +73,27 @@ StartKey := "" ; 开始强化
 SellKey := "" ; 开始贩卖
 StopKey := ""
 
-CoordNames := ["grid1", "grid64", "confirm", "ok", "detect", "enh1", "enh2"
-	, "sellGrid1", "sellGrid64", "sellConfirm", "sell1", "sell2"]
-CoordLabels := Map("grid1", "强化 第 1 格", "grid64", "强化 第 64 格", "confirm", "确认强化", "ok", "OK", "detect", "GEM 侦测位置"
+; 确认强化 / 确认贩卖不用坐标, 改为按 Enter
+CoordNames := ["grid1", "grid64", "ok", "detect", "enh1", "enh2", "sellGrid1", "sellGrid64", "sell1", "sell2"]
+CoordLabels := Map("grid1", "强化 第 1 格", "grid64", "强化 第 64 格", "ok", "OK", "detect", "GEM 侦测位置"
 	, "enh1", "ITEM 1 (强化)", "enh2", "ITEM 2 (强化)", "sellGrid1", "贩卖 第 1 格", "sellGrid64", "贩卖 第 64 格"
-	, "sellConfirm", "确认贩卖", "sell1", "ITEM 1 (贩卖)", "sell2", "ITEM 2 (贩卖)")
+	, "sell1", "ITEM 1 (贩卖)", "sell2", "ITEM 2 (贩卖)")
 ; 每种模式的背包格子 (第 1 格 / 第 64 格) 和页面按钮 (第 1 / 第 2 页) 坐标, 状态栏显示用的页名
 GridCoords := Map("enhance", ["grid1", "grid64"], "sell", ["sellGrid1", "sellGrid64"])
 PageCoords := Map("enhance", ["enh1", "enh2"], "sell", ["sell1", "sell2"])
 PageNames := ["ITEM 1", "ITEM 2"]
 
-; 使用第一个鼠标设备发送点击
+; 使用第一个键盘 / 鼠标设备发送输入 (键盘用来按 Enter 确认)
+KbId := 0
 MouseId := 0
 for id, dev in AHI.GetDeviceList() {
-	if dev.IsMouse {
+	if (dev.IsMouse && !MouseId)
 		MouseId := id
-		break
-	}
+	else if (!dev.IsMouse && !KbId)
+		KbId := id
 }
-if !MouseId {
+SC_ENTER := GetKeySC("Enter")
+if (!KbId || !MouseId) {
 	CheckDriver()
 	ExitApp
 }
@@ -106,7 +106,7 @@ g.OnEvent("Close", (*) => ExitApp())
 ; 标题栏: 图标 + 名称
 TOP := 58 ; 标题栏高度, 下面所有控件整体下移这么多
 if FileExist(IconFile)
-	g.Add("Picture", "x15 y8 w42 h42", IconFile)
+	g.Add("Picture", "x15 y8 w42 h42 " IconOpt, IconFile)
 g.SetFont("s16 Bold c303030")
 g.Add("Text", "x66 y12", "Biubiu强化小工具")
 g.SetFont("s10 Norm cDefault")
@@ -127,7 +127,7 @@ for ed in [edStart, edSell, edStop]
 	ed.OnEvent("Focus", CaptureKey.Bind(ed, btnSave))
 
 ; 坐标
-g.Add("GroupBox", "x10 y" TOP + 52 " w400 h392", "坐标设置   (点「取点」后, 鼠标移到目标位置按 F9)")
+g.Add("GroupBox", "x10 y" TOP + 52 " w400 h332", "坐标设置   (点「取点」后, 鼠标移到目标位置按 F9)")
 Coords := Map()
 for i, name in CoordNames {
 	y := TOP + 78 + (i - 1) * 30
@@ -142,9 +142,9 @@ g.Add("Button", Format("x340 y{} w62 h27", TOP + 78), "检查").OnEvent("Click",
 g.Add("Text", Format("x340 y{} w64 cGray", TOP + 112), "在屏幕上`n标出所有`n坐标 4 秒")
 
 ; 侦测图片: 每张一行 (截图按钮 / 预览 / 状态 / 用途)
-g.Add("GroupBox", "x10 y" TOP + 452 " w400 h142", "侦测图片")
+g.Add("GroupBox", "x10 y" TOP + 392 " w400 h142", "侦测图片")
 for i, key in ["gem", "empty", "slotEmpty"] {
-	y := TOP + 476 + (i - 1) * 38
+	y := TOP + 416 + (i - 1) * 38
 	g.Add("Button", Format("x24 y{} w100 h30", y), "截图 " Images[key].label).OnEvent("Click", ShotImage.Bind(key))
 	Images[key].pic := g.Add("Picture", Format("x134 y{} w34 h34 Border", y - 2))
 	Images[key].txt := g.Add("Text", Format("x176 y{} w120", y + 6), "未截图")
@@ -152,36 +152,40 @@ for i, key in ["gem", "empty", "slotEmpty"] {
 }
 
 ; 流程 (强化 / 贩卖共用)
-g.Add("GroupBox", "x10 y" TOP + 602 " w400 h156", "流程设置   (强化 / 贩卖共用)")
-g.Add("Text", "x24 y" TOP + 630, "每步间隔ms:")
-edStep := g.Add("Edit", "x110 y" TOP + 626 " w60 Center Number", 300)
-g.Add("Text", "x190 y" TOP + 630, "从第几格开始:")
-edStartSlot := g.Add("Edit", "x284 y" TOP + 626 " w44 Center Number", 1)
-g.Add("Text", "x334 y" TOP + 630 " cGray", "(1-64)")
-g.Add("Text", "x24 y" TOP + 664, "水晶在第")
-edCrystal := g.Add("Edit", "x82 y" TOP + 660 " w44 Center Number", 63)
-g.Add("Text", "x130 y" TOP + 664, "格")
-g.Add("Text", "x160 y" TOP + 664, "红宝在第")
-edRuby := g.Add("Edit", "x218 y" TOP + 660 " w44 Center Number", 64)
-g.Add("Text", "x266 y" TOP + 664, "格")
-g.Add("Text", "x292 y" TOP + 664 " cGray", "(这两格不处理)")
-g.Add("Text", "x24 y" TOP + 696, "页面:")
-chkP1 := g.Add("CheckBox", "x100 y" TOP + 694 " Checked", "ITEM 1")
-chkP2 := g.Add("CheckBox", "x180 y" TOP + 694 " Checked", "ITEM 2")
-g.Add("Text", "x260 y" TOP + 696 " cGray", "空格子会自动跳过")
-g.Add("Text", "x24 y" TOP + 728, "拖拽距离:")
-edDrag := g.Add("Edit", "x100 y" TOP + 724 " w60 Center Number", 100)
-g.Add("Text", "x166 y" TOP + 728 " cGray", "像素 (GEM 往上拖)")
-g.Add("Text", "x290 y" TOP + 728, "找图容差:")
-edTol := g.Add("Edit", "x356 y" TOP + 724 " w44 Center Number", 30)
+g.Add("GroupBox", "x10 y" TOP + 542 " w400 h188", "流程设置   (强化 / 贩卖共用)")
+g.Add("Text", "x24 y" TOP + 570, "每步间隔ms:")
+edStep := g.Add("Edit", "x110 y" TOP + 566 " w60 Center Number", 300)
+g.Add("Text", "x190 y" TOP + 570, "从第几格开始:")
+edStartSlot := g.Add("Edit", "x284 y" TOP + 566 " w44 Center Number", 1)
+g.Add("Text", "x334 y" TOP + 570 " cGray", "(1-64)")
+g.Add("Text", "x24 y" TOP + 604, "水晶在第")
+edCrystal := g.Add("Edit", "x82 y" TOP + 600 " w44 Center Number", 63)
+g.Add("Text", "x130 y" TOP + 604, "格")
+g.Add("Text", "x160 y" TOP + 604, "红宝在第")
+edRuby := g.Add("Edit", "x218 y" TOP + 600 " w44 Center Number", 64)
+g.Add("Text", "x266 y" TOP + 604, "格")
+g.Add("Text", "x292 y" TOP + 604 " cGray", "(这两格不处理)")
+g.Add("Text", "x24 y" TOP + 636, "页面:")
+chkP1 := g.Add("CheckBox", "x100 y" TOP + 634 " Checked", "ITEM 1")
+chkP2 := g.Add("CheckBox", "x180 y" TOP + 634 " Checked", "ITEM 2")
+g.Add("Text", "x260 y" TOP + 636 " cGray", "空格子会自动跳过")
+g.Add("Text", "x24 y" TOP + 668, "拖拽距离:")
+edDrag := g.Add("Edit", "x100 y" TOP + 664 " w60 Center Number", 100)
+g.Add("Text", "x166 y" TOP + 668 " cGray", "像素 (GEM 往上拖)")
+g.Add("Text", "x290 y" TOP + 668, "找图容差:")
+edTol := g.Add("Edit", "x356 y" TOP + 664 " w44 Center Number", 30)
+g.Add("Text", "x24 y" TOP + 700, "每次点击")
+edClicks := g.Add("Edit", "x82 y" TOP + 696 " w44 Center Number", 1)
+g.Add("Text", "x130 y" TOP + 700, "下")
+g.Add("Text", "x150 y" TOP + 700 " cGray", "(含 Enter 确认; 虚拟机漏点可设 2~3)")
 
-txtStatus := g.Add("Text", "x15 y" TOP + 768 " w400 cGray")
+txtStatus := g.Add("Text", "x15 y" TOP + 740 " w400 cGray")
 
 LoadConfig()
 ApplyHotkeys()
 UpdatePreviews()
 SetStatus("")
-g.Show("w420 h" TOP + 794)
+g.Show("w420 h" TOP + 766)
 return
 
 ; ---------------- 运行 ----------------
@@ -217,7 +221,7 @@ Validate(mode) {
 	pages := SelectedPages()
 	if !pages.Length
 		return "请至少勾选一个页面"
-	need := mode = "sell" ? ["sellGrid1", "sellGrid64", "sellConfirm"] : ["grid1", "grid64", "confirm", "ok", "detect"]
+	need := mode = "sell" ? ["sellGrid1", "sellGrid64"] : ["grid1", "grid64", "ok", "detect"]
 	for pg in pages
 		need.Push(PageCoords[mode][pg])
 	for name in need
@@ -256,11 +260,10 @@ SwitchPage(mode, pg) {
 	ClickPos(GetCoord(PageCoords[mode][pg]))
 }
 
-; 自动贩卖: 每页第 1~64 格 (跳过水晶 / 红宝格), 不是空格子就 右键 -> 确认贩卖, 等格子变成空格子再换下一格
+; 自动贩卖: 每页第 1~64 格 (跳过水晶 / 红宝格), 不是空格子就 右键 -> Enter 确认, 等格子变成空格子再换下一格
 RunSell() {
 	global Running
 	step := ToInt(edStep.Value)
-	confirm := GetCoord("sellConfirm")
 	sold := 0
 	where := ""
 	try {
@@ -275,7 +278,7 @@ RunSell() {
 					SetStatus(where " / " TOTAL_SLOTS ":  贩卖中…   (按 " StopKey " 停止)")
 					ClickPos(p, BTN_RIGHT)
 					SleepCheck(step)
-					ClickPos(confirm)
+					PressEnter()
 					SleepCheck(step)
 					SetStatus(where " / " TOTAL_SLOTS ":  等待格子变空…   (按 " StopKey " 停止)")
 					while (Running && !SlotIsEmpty(p))
@@ -306,7 +309,7 @@ RunEnhance() {
 	global Running
 	step := ToInt(edStep.Value)
 	crystal := SlotPos(ToInt(edCrystal.Value)), ruby := SlotPos(ToInt(edRuby.Value))
-	confirm := GetCoord("confirm"), ok := GetCoord("ok")
+	ok := GetCoord("ok")
 	done := 0
 	where := ""
 	try {
@@ -323,12 +326,15 @@ RunEnhance() {
 					continue
 				}
 				SetStatus(where " / " TOTAL_SLOTS ":  强化中…   (按 " StopKey " 停止)")
-				; 物品 / 水晶 / 红宝用右键, 确认 / OK 用左键
-				for act in [[p, BTN_RIGHT], [crystal, BTN_RIGHT], [confirm, BTN_LEFT], [ruby, BTN_RIGHT]
-					, [confirm, BTN_LEFT], [ok, BTN_LEFT], [confirm, BTN_LEFT]] {
+				; 物品 / 水晶 / 红宝用右键, OK 用左键, 确认 = 按 Enter ("enter")
+				for act in [[p, BTN_RIGHT], [crystal, BTN_RIGHT], "enter", [ruby, BTN_RIGHT]
+					, "enter", [ok, BTN_LEFT], "enter"] {
 					if !Running
 						break
-					ClickPos(act[1], act[2])
+					if (act = "enter")
+						PressEnter()
+					else
+						ClickPos(act[1], act[2])
 					SleepCheck(step)
 				}
 				; 等到侦测到 GEM 或 空 其中一张图
@@ -368,11 +374,27 @@ RunEnhance() {
 	Running := false
 }
 
+; 在 p 点击 "每次点击" 设定的次数 (虚拟机卡顿时单次点击可能没被游戏收到)
 ClickPos(p, btn := 0) { ; btn: BTN_LEFT / BTN_RIGHT
 	MoveTo(p.x, p.y)
-	AHI.SendMouseButtonEvent(MouseId, btn, 1)
-	Sleep HOLD_MS
-	AHI.SendMouseButtonEvent(MouseId, btn, 0)
+	Loop Max(ToInt(edClicks.Value), 1) {
+		if (A_Index > 1)
+			Sleep CLICK_GAP
+		AHI.SendMouseButtonEvent(MouseId, btn, 1)
+		Sleep HOLD_MS
+		AHI.SendMouseButtonEvent(MouseId, btn, 0)
+	}
+}
+
+; 确认 = 按 Enter, 次数同 "每次点击" 的设定
+PressEnter() {
+	Loop Max(ToInt(edClicks.Value), 1) {
+		if (A_Index > 1)
+			Sleep CLICK_GAP
+		AHI.SendKeyEvent(KbId, SC_ENTER, 1)
+		Sleep HOLD_MS
+		AHI.SendKeyEvent(KbId, SC_ENTER, 0)
+	}
 }
 
 ; 用 Interception 相对移动把鼠标移到屏幕坐标 (x, y)
@@ -494,7 +516,7 @@ ShowCoords(*) {
 		}
 		marks += 64
 	}
-	for name in ["confirm", "ok", "detect", "enh1", "enh2", "sellConfirm", "sell1", "sell2"] {
+	for name in ["ok", "detect", "enh1", "enh2", "sell1", "sell2"] {
 		if HasCoord(name) {
 			p := GetCoord(name)
 			Mark(ov, p.x - vx, p.y - vy, "30D030", CoordLabels[name])
@@ -755,6 +777,7 @@ SaveConfig(*) {
 	IniWrite(ToInt(edDrag.Value), CfgFile, "Main", "DragDist")
 	IniWrite(ToInt(edCrystal.Value), CfgFile, "Main", "CrystalSlot")
 	IniWrite(ToInt(edRuby.Value), CfgFile, "Main", "RubySlot")
+	IniWrite(Max(ToInt(edClicks.Value), 1), CfgFile, "Main", "Clicks")
 	IniWrite(chkP1.Value, CfgFile, "Main", "Page1")
 	IniWrite(chkP2.Value, CfgFile, "Main", "Page2")
 	for name in CoordNames
@@ -777,6 +800,7 @@ LoadConfig(ctrl := 0, *) {
 	edDrag.Value := IniRead(CfgFile, "Main", "DragDist", 100)
 	edCrystal.Value := IniRead(CfgFile, "Main", "CrystalSlot", 63)
 	edRuby.Value := IniRead(CfgFile, "Main", "RubySlot", 64)
+	edClicks.Value := IniRead(CfgFile, "Main", "Clicks", 1)
 	chkP1.Value := ToInt(IniRead(CfgFile, "Main", "Page1", 1))
 	chkP2.Value := ToInt(IniRead(CfgFile, "Main", "Page2", 1))
 	for name in CoordNames {

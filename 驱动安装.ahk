@@ -1,5 +1,5 @@
 /*
-Interception 驱动安装 / 卸载工具 (Biubiu小工具 需要这个驱动)
+Interception 驱动安装 / 卸载工具 (Biubiu 工具 需要这个驱动)
 - 编译成 exe 后会内置 install-interception.exe, 单独拷给别人就能用
 - 安装或卸载后都需要重启电脑才会生效
 */
@@ -48,12 +48,12 @@ UpdateState() {
 	if DriverInstalled()
 		txtState.Value := "当前状态: 已安装`n(刚安装完的话, 需要重启电脑才会生效)"
 	else
-		txtState.Value := "当前状态: 未安装`nBiubiu小工具 需要这个驱动才能模拟键盘鼠标"
+		txtState.Value := "当前状态: 未安装`nBiubiu 工具 需要这个驱动才能模拟键盘鼠标"
 }
 
 DoAction(act) {
 	if (act = "install" && DriverInstalled()) {
-		MsgBox("驱动已经安装过了。`n如果 Biubiu小工具 还是检测不到键盘鼠标, 请重启电脑。", Title, "Iconi")
+		MsgBox("驱动已经安装过了。`n如果 Biubiu 工具 还是检测不到键盘鼠标, 请重启电脑。", Title, "Iconi")
 		return
 	}
 	if (act = "uninstall") {
@@ -61,7 +61,7 @@ DoAction(act) {
 			MsgBox("驱动没有安装, 不需要卸载。", Title, "Iconi")
 			return
 		}
-		if (MsgBox("确定要卸载 Interception 驱动吗?`n卸载后 Biubiu小工具 将无法使用。", Title, "YesNo Icon!") != "Yes")
+		if (MsgBox("确定要卸载 Interception 驱动吗?`n卸载后 Biubiu 工具 将无法使用。", Title, "YesNo Icon!") != "Yes")
 			return
 	}
 	if !FileExist(Installer) {

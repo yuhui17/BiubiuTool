@@ -8,14 +8,19 @@ class AutoHotInterception {
 		dllName := "interception.dll"
 		if (A_IsCompiled) {
 			dllFile := A_LineFile "\..\Lib\" bitness "\" dllName
+			; 只在 dll 不存在或损坏 (0 字节) 时才释放: 同一文件夹里的多个工具共用这些 dll,
+			; 每次都覆盖的话, 两个工具同时运行会因为文件被占用而失败, 甚至把文件写坏
 			DirCreate("Lib")
-			FileInstall("Lib\AutoHotInterception.dll", "Lib\AutoHotInterception.dll", 1)
+			if (!FileExist("Lib\AutoHotInterception.dll") || !FileGetSize("Lib\AutoHotInterception.dll"))
+				try FileInstall("Lib\AutoHotInterception.dll", "Lib\AutoHotInterception.dll", 1)
 			if (bitness == "x86") {
 				DirCreate("Lib\x86")
-				FileInstall("Lib\x86\interception.dll", "Lib\x86\interception.dll", 1)
+				if (!FileExist("Lib\x86\interception.dll") || !FileGetSize("Lib\x86\interception.dll"))
+					try FileInstall("Lib\x86\interception.dll", "Lib\x86\interception.dll", 1)
 			} else {
 				DirCreate("Lib\x64")
-				FileInstall("Lib\x64\interception.dll", "Lib\x64\interception.dll", 1)
+				if (!FileExist("Lib\x64\interception.dll") || !FileGetSize("Lib\x64\interception.dll"))
+					try FileInstall("Lib\x64\interception.dll", "Lib\x64\interception.dll", 1)
 			}
 		} else {
 			dllFile := A_LineFile "\..\" bitness "\" dllName
